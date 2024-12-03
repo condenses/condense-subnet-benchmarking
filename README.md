@@ -1,6 +1,12 @@
 # Condense Benchmarking System
 
-This repository contains tools for benchmarking the Condense API against standard causal language models.
+This repository contains tools for benchmarking the Condense API (Bittensor) against standard causal language models.
+
+![Latest Bench](./results/condense-bench-01.png)
+
+*Ruler-4k-qa* means RULER subset 4096 and only `qa_1` and `qa_2` task. https://huggingface.co/datasets/simonjegou/ruler
+
+# Reproduce
 
 ## Prerequisites
 
@@ -27,6 +33,10 @@ pip install -r requirements.txt
 export CONDENSE_API_KEY="your-condense-api-key"
 export OPENAI_API_KEY="your-openai-api-key"
 ```
+
+*Contact `subnet@condenses.ai` for `CONDENSE_API_KEY`*
+If you're an validator. You can spin up your own api server
+- https://github.com/condenses/subnet-organic
 
 ## Running Benchmarks
 
