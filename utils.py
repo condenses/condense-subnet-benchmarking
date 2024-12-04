@@ -20,6 +20,7 @@ def load_npy_from_url(url: str, max_size_mb: int = 1024):
     Returns:
         tuple: A tuple containing the loaded data as a NumPy array and an error message (empty if no error occurred).
     """
+    print(url)
     try:
         # Check file size using an HTTP HEAD request
         with httpx.Client() as client:

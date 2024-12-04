@@ -2,9 +2,25 @@
 
 This repository contains tools for benchmarking the Condense API (Bittensor) against standard causal language models.
 
-![Latest Bench](./results/condense-bench-01.png)
+![Latest Bench](./results/bench-dec-04.png)
 
 *Ruler-4k-qa* means RULER subset 4096 and only `qa_1` and `qa_2` task. https://huggingface.co/datasets/simonjegou/ruler
+
+| Method | Accuracy | Input Tokens | Compression Rate |
+|--------|----------|--------------|------------------|
+| Original | 93% | 3,361 | 1.00 |
+| Condense (Top-1) | 73% | 963 ± 156 | Reduce 72% |
+| Condense (Top-5) | 59% | 958 ± 148 | Reduce 72% |
+| Knorm | 29% | - | Reduce 72% |
+| ExpectedAttentionPress | 70% | - | Reduce 72% |
+
+**Notes:**
+- Input tokens are reported as mean ± standard deviation where applicable
+- Compression Rate = compressed size / original size
+- Top-x refers to Elo-based miner sampling strategy
+- All experiments conducted on the RULER-4K question-answering dataset
+
+This table provides a clear comparison of different compression methods' performance across key metrics: accuracy, token efficiency, and compression rates.
 
 # Reproduce
 
