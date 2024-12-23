@@ -24,7 +24,8 @@ from pathlib import Path
 from kvpress import KnormPress
 from transformers import pipeline
 from structlog import get_logger
-
+from soft_token.soft_token_condenser_modeling import Condenser
+import gc
 logger = get_logger()
 
 
@@ -130,6 +131,33 @@ class CondenseAPI:
 
         raise ValueError("Failed to get valid response from API")
 
+    def soft_token_compress(self, context: str  ) -> DynamicCache:
+        compressed_tokens = self.condenser.compress(context)
+        print("compressed_tokens",compressed_tokens.shape)
+        with torch.no_grad(), self.press(self.model):
+            past_key_values = self.model(
+                inputs_embeds=compressed_tokens
+            ).past_key_values
+        numpy_past_key_values = tuple(
+            tuple(tensor.to(dtype=torch.float32).cpu().numpy() for tensor in tensors)
+            for tensors in past_key_values
+        )
+        del past_key_values
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        torch_past_key_values = tuple(
+            tuple(torch.from_numpy(tensor).to(device="cuda", dtype=torch.bfloat16) for tensor in tensors)
+            for tensors in numpy_past_key_values
+        )
+        del numpy_past_key_values
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        kv_cache = DynamicCache.from_legacy_cache(torch_past_key_values)
+        del torch_past_key_values
+        return kv_cache
+
     def load_kv_cache(self, url: str) -> DynamicCache:
         """Load KV cache from URL
 
@@ -172,6 +200,8 @@ class CondenseAPI:
         )
         self.tokenizer = self.pipeline.tokenizer
         self.model = self.pipeline.model
+        self.repo_id = "Condense-AI/Soft-Token-Condenser-Llama-3.2-1B"
+        self.condenser = Condenser.from_pretrained(self.repo_id, dtype=dtype)
 
     def condense_generate(
         self,
@@ -334,20 +364,21 @@ class CondenseAPI:
         }
 
         if "condense" in config.generation_types:
-            selected_miner_uid = config.specific_uid
-            top_incentive = config.top_incentive
-            compressed_kv_url = self.condense(
-                condense_text,
-                top_incentive=top_incentive,
-                specific_uid=selected_miner_uid,
-            )
-            kv_cache = self.load_kv_cache(compressed_kv_url)
+            # selected_miner_uid = config.specific_uid
+            # top_incentive = config.top_incentive
+            # compressed_kv_url = self.condense(
+            #     condense_text,
+            #     top_incentive=top_incentive,
+            #     specific_uid=selected_miner_uid,
+            # )
+            # kv_cache = self.load_kv_cache(compressed_kv_url)
+            kv_cache=self.soft_token_compress(condense_text)
             condensed_length = kv_cache.get_seq_length()
             result.update(
                 {
                     "condensed_length": condensed_length,
-                    "miner_uid": selected_miner_uid,
-                    "kv_cache_url": compressed_kv_url,
+                    # "miner_uid": selected_miner_uid,
+                    # "kv_cache_url": compressed_kv_url,
                     "condensed": self._try_generate(
                         lambda: self.condense_generate(
                             prompt, kv_cache, context_length=context_length
@@ -358,8 +389,8 @@ class CondenseAPI:
             logger.info(
                 "condense_result",
                 condensed_length=condensed_length,
-                miner_uid=selected_miner_uid,
-                kv_cache_url=compressed_kv_url,
+                # miner_uid=selected_miner_uid,
+                # kv_cache_url=compressed_kv_url,
                 answers=answers,
                 condensed=result["condensed"],
             )
