@@ -47,6 +47,7 @@ pip install -r requirements.txt
 3. Set up environment variables:
 ```bash
 export CONDENSE_API_KEY="your-condense-api-key"
+export TOGETHER_API_KEY="together-api-key"
 export OPENAI_API_KEY="your-openai-api-key"
 ```
 
@@ -61,7 +62,7 @@ The benchmarking process consists of three main steps:
 ### 1. Run the Main Benchmark
 
 ```bash
-python main.py
+python main.py 
 ```
 
 This script:
@@ -73,7 +74,7 @@ This script:
 ### 2. Evaluate Accuracy
 
 ```bash
-python get_accuracy.py
+python get_accuracy.py --tier tier_use_to_bench_mark
 ```
 
 This script:
