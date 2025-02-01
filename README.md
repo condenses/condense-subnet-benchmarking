@@ -118,6 +118,9 @@ Adjust benchmark parameters in `main.py`:
 @dataclass
 class BenchmarkConfig:
     max_samples: int = 100    # Maximum number of samples to process
+    tier: str = "universal"  # Tier use to benchmark
+    top_incentive: float = 0.1  # Top incentive for miners
+    specific_uid: int = -1  # Specific miner UID to use
 ```
 
 ### Generation Configuration
@@ -131,6 +134,7 @@ class GenerationConfig:
     temperature: float = 0.1
     do_sample: bool = True
     return_full_text: bool = False
+    
 ```
 
 ## Output Structure
