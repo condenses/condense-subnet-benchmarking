@@ -29,7 +29,7 @@ def get_accuracy(result_files: List[str], methods: List[str],tier: str):
                 if tier=="research":
                     if method == "condensed":
                         tokens[method].append(item["condensed_length"])
-                    elif method == "causal":
+                    elif method == "casual":
                         tokens[method].append(item["context_length"])
                 if tier=="universal":
                     if method == "condensed":
@@ -82,7 +82,7 @@ if __name__ == "__main__":
         "--methods",
         nargs="+",
         default=["condensed"],
-        help="Methods to evaluate (condensed, causal, press)",
+        help="Methods to evaluate (condensed, casual)",
     )
     parser.add_argument(
         "--results-dir",

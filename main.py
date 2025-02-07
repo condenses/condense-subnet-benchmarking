@@ -26,6 +26,7 @@ from transformers import pipeline
 from structlog import get_logger
 from together import Together
 
+
 logger = get_logger()
 PROMPT = """
 You are given a context and a question. Your task is to answer the question based on the context.
@@ -56,7 +57,7 @@ class BenchmarkConfig:
     max_samples: int = 100  # Maximum number of samples to process
     max_length: int = 20000  # Maximum context length to process
     generation_types: List[str] = (
-        None  # Types of generation to benchmark (condense, kvpress, causal)
+        None  # Types of generation to benchmark (condense, kvpress, casual)
     )
     tier: str = "universal"  # Tier use to benchmark
     top_incentive: float = 0.1  # Top incentive for miners
@@ -220,12 +221,12 @@ class CondenseAPI:
             prompt_input_ids, kv_cache, context_length, config.max_new_tokens
         )
 
-    def causal_generate(
+    def casual_generate(
         self,
         messages: List[Dict[str, str]],
         config: GenerationConfig = GenerationConfig(),
     ) -> str:
-        """Generate response using standard causal LM
+        """Generate response using standard casual LM
 
         Args:
             messages: List of message dictionaries
@@ -385,9 +386,9 @@ class CondenseAPI:
                     condensed=result["condensed"],
                 )
 
-            if "causal" in config.generation_types:
-                result["causal"] = self._try_generate(
-                    lambda: self.causal_generate(messages)
+            if "casual" in config.generation_types:
+                result["casual"] = self._try_generate(
+                    lambda: self.casual_generate(messages)
                 )
 
             if "kvpress" in config.generation_types:
@@ -402,13 +403,13 @@ class CondenseAPI:
                 specific_uid=config.specific_uid,
                 tier=config.tier,
             )
-
+            print(compressed_context[:200])
             condensed_result = self._try_generate(
                 lambda: self.generate_universal_answer(prompt, compressed_context, "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo-128K")
             )
 
             
-            causal_result = self._try_generate(
+            casual_result = self._try_generate(
                 lambda: self.generate_universal_answer(prompt, context,"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo-128K")
             )
 
@@ -423,7 +424,7 @@ class CondenseAPI:
             )
             context_length = context_input_ids.shape[1]
             compress_rate=compress_context_length/context_length
-
+            print("Compress_rate",compress_rate)
             result= {
                 'context': context,
                 'question': prompt,
@@ -431,7 +432,7 @@ class CondenseAPI:
                 'condense_rate': compress_rate,
                 'miner_uid': selected_miner_uid,
                 'condensed': condensed_result,
-                'causal': causal_result,
+                'casual': casual_result,
                 "timestamp": time.time()
             }
         return result
@@ -586,7 +587,7 @@ class CondenseAPI:
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Benchmark the Condense API against standard causal language models. "
+        description="Benchmark the Condense API against standard casual language models. "
         "This tool runs comparative tests measuring accuracy, speed, and resource usage "
         "across different text generation approaches."
     )
@@ -594,7 +595,7 @@ def parse_args():
         "--generation-types",
         nargs="+",
         default=["condense"],
-        help="Types of generation to benchmark. Options: condense, causal, kvpress. "
+        help="Types of generation to benchmark. Options: condense, casual, kvpress. "
         "Multiple values can be specified.",
     )
     parser.add_argument(
