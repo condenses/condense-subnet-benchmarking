@@ -427,6 +427,7 @@ class CondenseAPI:
             print("Compress_rate",compress_rate)
             result= {
                 'context': context,
+                'condense_context': compressed_context,
                 'question': prompt,
                 'answers': answers,
                 'condense_rate': compress_rate,
