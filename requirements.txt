@@ -8,3 +8,10 @@ tqdm
 numpy
 datetime
 kaleido
+hf-transfers
+datasets
+rich
+kvpress
+structlog
+together
+natsort

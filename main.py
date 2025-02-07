@@ -3,8 +3,8 @@ import torch
 import httpx
 import pandas as pd
 import time
-import argparse
-from transformers import DynamicCache, pipeline
+import argparse 
+from transformers import DynamicCache, pipeline,AutoTokenizer
 from typing import List, Dict, Optional, Union
 from utils import load_npy_from_url
 from datasets import load_dataset
@@ -24,9 +24,19 @@ from pathlib import Path
 from kvpress import KnormPress
 from transformers import pipeline
 from structlog import get_logger
+from together import Together
+
 
 logger = get_logger()
-
+PROMPT = """
+You are given a context and a question. Your task is to answer the question based on the context.
+---CONTEXT---
+{context}
+---QUESTION---
+{question}
+---END---
+Your response should be concise and to the point. Skip any greetings or other unrelevant information.
+"""
 
 @dataclass
 class GenerationConfig:
@@ -47,9 +57,10 @@ class BenchmarkConfig:
     max_samples: int = 100  # Maximum number of samples to process
     max_length: int = 20000  # Maximum context length to process
     generation_types: List[str] = (
-        None  # Types of generation to benchmark (condense, kvpress, causal)
+        None  # Types of generation to benchmark (condense, kvpress, casual)
     )
-    top_incentive: float = 0.025  # Top incentive for miners
+    tier: str = "universal"  # Tier use to benchmark
+    top_incentive: float = 0.1  # Top incentive for miners
     specific_uid: int = -1  # Specific miner UID to use
 
 
@@ -121,7 +132,10 @@ class CondenseAPI:
             try:
                 response = self.client.post("/api/organic", json=payload, timeout=128)
                 if response.status_code == 200:
-                    return response.json()["compressed_kv_url"]
+                    if tier=="research":
+                        return response.json()["compressed_kv_url"]
+                    else:
+                        return response.json()["compressed_context"]
                 time.sleep(1)
             except Exception as e:
                 if attempt == 2:
@@ -158,6 +172,7 @@ class CondenseAPI:
         self,
         model_name: str = "unsloth/Mistral-7B-Instruct-v0.2",
         device: str = "cuda",
+        tier: str = "universal",
         dtype=torch.bfloat16,
     ) -> None:
         """Initialize the model and tokenizer for inference
@@ -167,11 +182,16 @@ class CondenseAPI:
             device: Device to load model on
             dtype: Data type for model weights
         """
-        self.pipeline = pipeline(
-            "text-generation", model=model_name, device=device, torch_dtype=dtype
-        )
-        self.tokenizer = self.pipeline.tokenizer
-        self.model = self.pipeline.model
+        if tier=="research":
+            self.pipeline = pipeline(
+                "text-generation", model=model_name, device=device, torch_dtype=dtype
+            )
+            self.tokenizer = self.pipeline.tokenizer
+            self.model = self.pipeline.model
+        else:
+            model_name="unsloth/Meta-Llama-3.1-8B-Instruct"
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.together_client=Together()
 
     def condense_generate(
         self,
@@ -201,12 +221,12 @@ class CondenseAPI:
             prompt_input_ids, kv_cache, context_length, config.max_new_tokens
         )
 
-    def causal_generate(
+    def casual_generate(
         self,
         messages: List[Dict[str, str]],
         config: GenerationConfig = GenerationConfig(),
     ) -> str:
-        """Generate response using standard causal LM
+        """Generate response using standard casual LM
 
         Args:
             messages: List of message dictionaries
@@ -310,70 +330,112 @@ class CondenseAPI:
         Returns:
             Dictionary of results
         """
+
         context = item["context"]
         prompt = item["question"]
         answers = item["answer"]
+        if config.tier=="research":
+            messages = [{"role": "user", "content": f"{context}<|splitter|>\n\n{prompt}"}]
+            messages_str = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            condense_text, prompt = messages_str.split("<|splitter|>")
 
-        messages = [{"role": "user", "content": f"{context}<|splitter|>\n\n{prompt}"}]
-        messages_str = self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        condense_text, prompt = messages_str.split("<|splitter|>")
+            condense_input_ids = self.tokenizer.encode(
+                condense_text, return_tensors="pt", add_special_tokens=False
+            )
+            context_length = condense_input_ids.shape[1]
 
-        condense_input_ids = self.tokenizer.encode(
-            condense_text, return_tensors="pt", add_special_tokens=False
-        )
-        context_length = condense_input_ids.shape[1]
+            result = {
+                "context": context,
+                "question": prompt,
+                "answers": answers,
+                "context_length": context_length,
+                "timestamp": time.time(),
+            }
+            
+            if "condense" in config.generation_types:
+                selected_miner_uid = config.specific_uid
+                top_incentive = config.top_incentive
+                compressed_kv_url = self.condense(
+                    condense_text,
+                    top_incentive=top_incentive,
+                    specific_uid=selected_miner_uid,
+                    tier=config.tier,
+                )
+                kv_cache = self.load_kv_cache(compressed_kv_url)
+                condensed_length = kv_cache.get_seq_length()
+                result.update(
+                    {
+                        "condensed_length": condensed_length,
+                        "miner_uid": selected_miner_uid,
+                        "kv_cache_url": compressed_kv_url,
+                        "condensed": self._try_generate(
+                            lambda: self.condense_generate(
+                                prompt, kv_cache, context_length=context_length
+                            )
+                        ),
+                    }
+                )
+                logger.info(
+                    "condense_result",
+                    condensed_length=condensed_length,
+                    miner_uid=selected_miner_uid,
+                    kv_cache_url=compressed_kv_url,
+                    answers=answers,
+                    condensed=result["condensed"],
+                )
 
-        result = {
-            "context": context,
-            "question": prompt,
-            "answers": answers,
-            "context_length": context_length,
-            "timestamp": time.time(),
-        }
+            if "casual" in config.generation_types:
+                result["casual"] = self._try_generate(
+                    lambda: self.casual_generate(messages)
+                )
 
-        if "condense" in config.generation_types:
+            if "kvpress" in config.generation_types:
+                result["press"] = self._try_generate(
+                    lambda: self.press_generate(context, prompt)
+                )
+        if config.tier=="universal":
             selected_miner_uid = config.specific_uid
-            top_incentive = config.top_incentive
-            compressed_kv_url = self.condense(
-                condense_text,
-                top_incentive=top_incentive,
-                specific_uid=selected_miner_uid,
+            compressed_context = self.condense(
+                context,
+                top_incentive=config.top_incentive,
+                specific_uid=config.specific_uid,
+                tier=config.tier,
             )
-            kv_cache = self.load_kv_cache(compressed_kv_url)
-            condensed_length = kv_cache.get_seq_length()
-            result.update(
-                {
-                    "condensed_length": condensed_length,
-                    "miner_uid": selected_miner_uid,
-                    "kv_cache_url": compressed_kv_url,
-                    "condensed": self._try_generate(
-                        lambda: self.condense_generate(
-                            prompt, kv_cache, context_length=context_length
-                        )
-                    ),
-                }
-            )
-            logger.info(
-                "condense_result",
-                condensed_length=condensed_length,
-                miner_uid=selected_miner_uid,
-                kv_cache_url=compressed_kv_url,
-                answers=answers,
-                condensed=result["condensed"],
+            print(compressed_context[:200])
+            condensed_result = self._try_generate(
+                lambda: self.generate_universal_answer(prompt, compressed_context, "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo-128K")
             )
 
-        if "causal" in config.generation_types:
-            result["causal"] = self._try_generate(
-                lambda: self.causal_generate(messages)
+            
+            casual_result = self._try_generate(
+                lambda: self.generate_universal_answer(prompt, context,"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo-128K")
             )
 
-        if "kvpress" in config.generation_types:
-            result["press"] = self._try_generate(
-                lambda: self.press_generate(context, prompt)
+            
+            condense_input_ids = self.tokenizer.encode(
+                compressed_context, return_tensors="pt", add_special_tokens=False
             )
+            compress_context_length = condense_input_ids.shape[1]
 
+            context_input_ids = self.tokenizer.encode(
+                context, return_tensors="pt", add_special_tokens=False
+            )
+            context_length = context_input_ids.shape[1]
+            compress_rate=compress_context_length/context_length
+            print("Compress_rate",compress_rate)
+            result= {
+                'context': context,
+                'condense_context': compressed_context,
+                'question': prompt,
+                'answers': answers,
+                'condense_rate': compress_rate,
+                'miner_uid': selected_miner_uid,
+                'condensed': condensed_result,
+                'casual': casual_result,
+                "timestamp": time.time()
+            }
         return result
 
     def _try_generate(self, generate_fn) -> Dict:
@@ -429,6 +491,26 @@ class CondenseAPI:
                     print(f"Error benchmarking {dataset_name}/{subset}: {str(e)}")
 
         return {"results": results}
+
+    def generate_universal_answer(
+        self,
+        prompt: str,
+        context: str,
+        model : str,
+    ) -> str:  
+        messages = [
+            {
+                "role": "user",
+                "content": PROMPT.format(context=context, question=prompt),
+                
+            },
+        ]
+        response = self.together_client.chat.completions.create(
+            model=model, messages=messages, temperature=0
+        )
+        answer = response.choices[0].message.content
+
+        return answer
 
     @torch.no_grad()
     def generate_answer(
@@ -506,7 +588,7 @@ class CondenseAPI:
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Benchmark the Condense API against standard causal language models. "
+        description="Benchmark the Condense API against standard casual language models. "
         "This tool runs comparative tests measuring accuracy, speed, and resource usage "
         "across different text generation approaches."
     )
@@ -514,7 +596,7 @@ def parse_args():
         "--generation-types",
         nargs="+",
         default=["condense"],
-        help="Types of generation to benchmark. Options: condense, causal, kvpress. "
+        help="Types of generation to benchmark. Options: condense, casual, kvpress. "
         "Multiple values can be specified.",
     )
     parser.add_argument(
@@ -548,6 +630,12 @@ def parse_args():
         help="Top incentive rate for miners (0.0-1.0). Higher values may attract faster miners.",
     )
     parser.add_argument(
+        "--tier",
+        type=str,
+        default="universal",
+        help="Tier use to benchmark",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume benchmarking from previous results instead of starting fresh.",
@@ -570,7 +658,7 @@ def main():
     ]
 
     api = CondenseAPI(api_key)
-    api.load_model()
+    api.load_model(tier=args.tier)
 
     config = BenchmarkConfig(
         max_samples=args.max_samples,
@@ -578,6 +666,7 @@ def main():
         generation_types=args.generation_types,
         top_incentive=args.top_incentive,
         specific_uid=args.specific_uid,
+        tier=args.tier,
     )
     output_folder = f"results/{dataset_configs[0]['dataset']}"
     os.makedirs(output_folder, exist_ok=True)

@@ -5,11 +5,12 @@ from typing import List
 from tqdm import tqdm
 import argparse
 import json
+from natsort import natsorted
 
 CLIENT = OpenAI()
 
 
-def get_accuracy(result_files: List[str], methods: List[str]):
+def get_accuracy(result_files: List[str], methods: List[str],tier: str):
     samples = []
     accuracies = {method: [] for method in methods}
     tokens = {method: [] for method in methods}
@@ -26,10 +27,15 @@ def get_accuracy(result_files: List[str], methods: List[str]):
                     continue
 
                 response = item[method]["response"]
-                if method == "condensed":
-                    tokens[method].append(item["condensed_length"])
-                elif method == "causal":
-                    tokens[method].append(item["context_length"])
+                if tier=="research":
+                    if method == "condensed":
+                        tokens[method].append(item["condensed_length"])
+                    elif method == "casual":
+                        tokens[method].append(item["context_length"])
+                if tier=="universal":
+                    if method == "condensed":
+                        tokens[method].append(item["condense_rate"])
+
 
                 messages = [
                     {"role": "system", "content": "You are a helpful assistant."},
@@ -53,11 +59,20 @@ def get_accuracy(result_files: List[str], methods: List[str]):
 
     results = {}
     for method in methods:
-        if accuracies[method]:  # Only include if we have data
-            results[f"{method}_accuracy"] = np.mean(accuracies[method])
-            if tokens[method]:  # Only include token stats if available
-                results[f"{method}_tokens_mean"] = np.mean(tokens[method])
-                results[f"{method}_tokens_std"] = np.std(tokens[method])
+        if tier=="research":
+            if accuracies[method]:  # Only include if we have data
+                results[f"{method}_accuracy"] = np.mean(accuracies[method])
+                if tokens[method]:  # Only include token stats if available
+                    results[f"{method}_tokens_mean"] = np.mean(tokens[method])
+                    results[f"{method}_tokens_std"] = np.std(tokens[method])
+        if tier=="universal":
+            if accuracies[method]:
+                results[f"{method}_accuracy"] = np.mean(accuracies[method])
+                if tokens[method]:
+                    results[f"{method}_compressrate"] = np.mean(tokens[method])
+    
+    with open(f"{args.results_dir}/accuracies.json", "w") as f:
+        json.dump(accuracies, f)
 
     return results
 
@@ -70,7 +85,7 @@ if __name__ == "__main__":
         "--methods",
         nargs="+",
         default=["condensed"],
-        help="Methods to evaluate (condensed, causal, press)",
+        help="Methods to evaluate (condensed, casual)",
     )
     parser.add_argument(
         "--results-dir",
@@ -79,10 +94,16 @@ if __name__ == "__main__":
         help="Directory containing result files",
     )
 
-    args = parser.parse_args()
-    result_files = glob.glob(f"{args.results_dir}/*.json")
+    parser.add_argument(
+        "--tier",
+        type=str,
+        help="Tier use for evaluation (research, universal)",
+    )
 
-    results = get_accuracy(result_files, args.methods)
+    args = parser.parse_args()
+    result_files = natsorted(glob.glob(f"{args.results_dir}/sample_*.json"))
+
+    results = get_accuracy(result_files, args.methods,args.tier)
 
     # Print results
     for key, value in results.items():
