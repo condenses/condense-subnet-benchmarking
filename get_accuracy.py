@@ -5,6 +5,7 @@ from typing import List
 from tqdm import tqdm
 import argparse
 import json
+from natsort import natsorted
 
 CLIENT = OpenAI()
 
@@ -69,7 +70,9 @@ def get_accuracy(result_files: List[str], methods: List[str],tier: str):
                 results[f"{method}_accuracy"] = np.mean(accuracies[method])
                 if tokens[method]:
                     results[f"{method}_compressrate"] = np.mean(tokens[method])
-
+    
+    with open(f"{args.results_dir}/accuracies.json", "w") as f:
+        json.dump(accuracies, f)
 
     return results
 
@@ -98,7 +101,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    result_files = glob.glob(f"{args.results_dir}/*.json")
+    result_files = natsorted(glob.glob(f"{args.results_dir}/sample_*.json"))
 
     results = get_accuracy(result_files, args.methods,args.tier)
 
